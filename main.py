@@ -3,7 +3,7 @@ import urllib.request
 import openpyxl
 from datetime import datetime
 
-_BANNER_URL="https://github.com/MadeBaruna/paimon-moe/raw/fe3298c16f840fc6c3e47c96ff83718c8a801279/src/data/banners.js"
+_BANNER_URL="https://github.com/MadeBaruna/paimon-moe/raw/main/src/data/banners.js"
 _LOCALE_URL="https://github.com/MadeBaruna/paimon-moe/raw/main/src/locales/items/zh.json"
 _ENCODE="utf-8"
 _PAIMON_DATE_FORMAT="%Y-%m-%d %H:%M:%S"
@@ -128,13 +128,15 @@ def fix_pity_row_group_by_sheet(ws:openpyxl.worksheet.worksheet.Worksheet):
     group_col=_PAIMON_TITLE.index("Group")
     banner_col=_PAIMON_TITLE.index("Banner")
     max_col=len(_PAIMON_TITLE)
+    star5_pity_count = 1
+    star4_pity_count = 1
     if ws.max_row > 1:
         ws[2][pity_col].value=1
         ws[2][roll_col].value=1
         ws[2][group_col].value=1
     if ws.max_row < 2:
         return
-    for i in range(3,ws.max_row):
+    for i in range(3,ws.max_row+1):
         #先填group
         if ws[i][time_col].value == ws[i-1][time_col].value:
             #时间相同为一组
@@ -150,30 +152,88 @@ def fix_pity_row_group_by_sheet(ws:openpyxl.worksheet.worksheet.Worksheet):
             ws[i][roll_col].value = ws[i-1][roll_col].value+1
             if not time_same:
                 ws[i][group_col].value = ws[i-1][group_col].value+1
-            if ws[i][star_col].value == "3":
+            if str(ws[i][star_col].value) == "3":
+                #抽出3星，Pity列置1，计数+1
                 ws[i][pity_col].value = 1
-            
-            j=i-1 #j指向i的上一行行号
-            count=1
-            while j>1 and \
-                int(ws[j][star_col].value) < int(ws[i][star_col].value) and \
-                ws[j][banner_col].value == ws[i][banner_col].value and \
-                _get_valid_col(ws[j])<=max_col:
-                j-=1
-                count+=1
-            ws[i][pity_col].value=count
+                star5_pity_count+=1
+                star4_pity_count+=1            
+            elif str(ws[i][star_col].value) == "4":
+                #抽出4星
+                ws[i][pity_col].value = star4_pity_count
+                star5_pity_count+=1
+                star4_pity_count=1
+            elif str(ws[i][star_col].value) == "5":
+                #抽出5星
+                ws[i][pity_col].value = star5_pity_count
+                star4_pity_count+=1
+                star5_pity_count=1
+            else:
+                #错误
+                print(f"无法解析星级{ws[i][star_col].value}")
         else:
             #新卡池
             ws[i][pity_col].value = 1
             ws[i][roll_col].value = 1
             ws[i][group_col].value = 1
-
-
+            star5_pity_count=1
+            star4_pity_count=1
 
 def fix_pity_row_group(wb:openpyxl.workbook.Workbook):
     for sheet_name in wb.sheetnames:
         fix_pity_row_group_by_sheet(wb[sheet_name])
-    wb.save("test_output2.xlsx")
+
+def trim_worksheet(ws:openpyxl.worksheet.worksheet.Worksheet):
+    valid_col_num = len(_PAIMON_TITLE)
+    if valid_col_num < ws.max_column:
+        ws.delete_cols(valid_col_num+1,ws.max_column - valid_col_num)
+
+def trim_workbook(wb:openpyxl.workbook.Workbook):
+    for sheet_name in wb.sheetnames:
+        trim_worksheet(wb[sheet_name])
+
+
+def add_extra_data(wb:openpyxl.workbook.Workbook,banners_dict:dict):
+    #添加Banner List Sheet
+    banner_sheet_name = "Banner List"
+    banner_sheet_titles=["Name","Start","End"]
+    wb.create_sheet(banner_sheet_name)
+    ws=wb[banner_sheet_name]
+    ws.append(banner_sheet_titles)
+    #新手祈愿
+    ws.append((
+        banners_dict['beginners'][0]['name'],
+        banners_dict['beginners'][0]['start'].strftime(_PAIMON_DATE_FORMAT),
+        banners_dict['beginners'][0]['end'].strftime(_PAIMON_DATE_FORMAT)))
+    #常驻祈愿
+    ws.append((
+        banners_dict['standard'][0]['name'],
+        banners_dict['standard'][0]['start'].strftime(_PAIMON_DATE_FORMAT),
+        banners_dict['standard'][0]['end'].strftime(_PAIMON_DATE_FORMAT)))
+    #角色活动祈愿
+    for event in banners_dict['characters']:
+        ws.append((
+            event['name'],
+            event['start'].strftime(_PAIMON_DATE_FORMAT),
+            event['end'].strftime(_PAIMON_DATE_FORMAT),
+        ))
+    #武器活动祈愿
+    for event in banners_dict['weapons']:
+        ws.append((
+            event['name'],
+            event['start'].strftime(_PAIMON_DATE_FORMAT),
+            event['end'].strftime(_PAIMON_DATE_FORMAT),
+        ))
+    
+    #添加Information Sheet
+    info_sheet_name = "Information Sheet"
+    wb.create_sheet(info_sheet_name)
+    ws=wb[info_sheet_name]
+    ws['A1'] = "Paimon.moe Wish History Export"
+    ws['A2'] = 'Version'
+    ws['B2'] = '3'
+    ws['A3'] = 'Export Date'
+    ws['B3'] = datetime.now().strftime(_PAIMON_DATE_FORMAT)
+    ws.merge_cells('A1:B1')
 
 def main():
     banners_dict=get_banners()
@@ -220,11 +280,10 @@ def main():
         if diff_flag == True:
             row.append("1")
         worksheet.append(row)
+    fix_pity_row_group(workbook)
+    trim_workbook(workbook)
+    add_extra_data(workbook, banners_dict)
     workbook.save("test_output.xlsx")
 
-
-
 if __name__=="__main__":
-    #main()
-    fix_pity_row_group(openpyxl.load_workbook("test_output.xlsx"))
-    #fix_pity_row_group_by_sheet(openpyxl.load_workbook("test_output.xlsx")["Character Event"])
+    main()
